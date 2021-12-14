@@ -35,8 +35,8 @@ class MapService(object):
         static_map = rospy.ServiceProxy('static_map', GetMap)
         self.map_data = static_map().map
         self.map_org = np.array([self.map_data.info.origin.position.x, self.map_data.info.origin.position.y])
-        shape = self.map_data.info.height, self.map_data.info.width
-        self.map_arr = np.array(self.map_data.data, dtype='float32').reshape(shape)
+        self.shape = self.map_data.info.height, self.map_data.info.width
+        self.map_arr = np.array(self.map_data.data, dtype='float32').reshape(self.shape)
         self.resolution = self.map_data.info.resolution
 
     def show_map(self, point=None):
