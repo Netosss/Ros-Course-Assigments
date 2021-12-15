@@ -17,6 +17,7 @@ import copy
 
 WALL = 50
 STEP_SIZE = 60
+WALL_DIST = 5
 
 
 class Direction:
@@ -60,6 +61,15 @@ class Manager:
         self.ms = MapService()
         self.cur_pos = None
         self.my_map_ = copy.deepcopy(self.ms.map_arr)
+
+    def WallCheck(self, row, col):
+        directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        for direction in directions:
+            for i in range(WALL_DIST):
+                if self.Valid(row + direction[0] * i, col + direction[1] * i) and \
+                        self.my_map_[row + direction[0] * i][col + direction[1] * i] == 100:
+                    return [True, direction]
+        return [False, (0, 0)]
 
     def Move(self, x, y, w=1.0):
         self.move_client.wait_for_server()
