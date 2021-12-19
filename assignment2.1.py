@@ -5,17 +5,22 @@ import numpy as np
 from nav_msgs.msg import OccupancyGrid, MapMetaData, Odometry
 import Manager as mn
 import matplotlib.pyplot as plt
-
+from copy import deepcopy
 from nav_msgs.msg import OccupancyGrid
 from map_msgs.msg import OccupancyGridUpdate
+from math import dist
 
+GOOD_LINE = 5
 TH = 7
 WALL = 80
-STEP_SIZE = 60
-SEEN_SIZE = 29
+SEEN_SIZE = 50
+RADIUS = 10
 SPHERE_SIZE = 20
-SPHERE_INDICATE = 45
-WALL_DIST = 5
+LINE_INDICATE = 10
+SPHERE_INDICATE = 80
+WALL_DIST = 5  # same as manager param!
+SHIFT_INDICATE = 12  # for indicate shifted circle
+DIFF = 2
 
 
 class Direction:
@@ -53,6 +58,153 @@ class CostmapUpdater:
         if not self.cost_map is None:
             plt.imshow(self.cost_map)
             plt.show()
+
+
+class SphereHandler:
+    def __init__(self, manager: mn.Manager):
+        self.cmu = CostmapUpdater()
+        self.ms = mn.MapService()
+        self.m_founds_spheres = []  # center of exposed spheres
+        self.m_manager = manager
+
+    # # need to rechange the function!!!first indicate if it is top or bottom point by the dis in the caller function,
+    # # after you know that is bottom for example you take the bottom_point and take about until 10 steps down and check for
+    # # a sphere indicate at row, you get the distance if it is legal(for now it is 4-10) return the (x,y) with the
+    # # appropriate dist , than at caller you should make a symmetric with given x,y and the known point
+    # def GetDistLine(self, x_top_point, y_top_point, opposite_direction):
+    #     dist_from_top = 0
+    #     x_top = x_top_point
+    #     y_top = y_top_point
+    #     current = 0
+    #     if abs(opposite_direction[0]) == 1:
+    #         direction = (0, 1)
+    #     else:
+    #         direction = (1, 0)
+    #     for direct in [direction, (-direction[0], -direction[1])]:
+    #         while self.m_manager.Valid(x_top, y_top) and self.cmu.cost_map[x_top][y_top] > SPHERE_INDICATE:
+    #             is_circle = False
+    #             temp_x = x_top
+    #             temp_y = y_top
+    #             if is_circle:
+    #                 current = current + 1
+    #             for i in range(int(SPHERE_SIZE + 2 // 2)):
+    #                 if self.m_manager.Valid(temp_x, temp_y) and self.cmu.cost_map[temp_x][temp_y] > SPHERE_INDICATE:
+    #                     is_circle = True
+    #                     break
+    #                 temp_x = temp_x + direct[0]
+    #                 temp_y = temp_y + direct[1]
+    #             x_top = x_top + opposite_direction[0]
+    #             y_top = y_top + opposite_direction[1]
+    #             dist_from_top = dist_from_top + 1
+
+    def OppositeDirection(self, direction):
+        if abs(direction[0]) == 1:
+            opp = (0, 1)
+        else:
+            opp = (1, 0)
+        return opp
+
+    def Count(self, row, col, direction):
+        counter = 0
+        temp_row_top = row
+        temp_col_top = col
+        # first we want to get the far point at the row\column that have sphere indicate
+        while self.m_manager.Valid(temp_row_top, temp_col_top) and self.cmu.cost_map[temp_row_top][
+            temp_col_top] > SPHERE_INDICATE:
+            temp_row_top = temp_row_top + direction[0]
+            temp_col_top = temp_col_top + direction[1]
+        direction[0], direction[1] = -direction[0], -direction[1]
+        temp_row_down = temp_row_top + direction[0]
+        temp_col_down = temp_col_top + direction[0]
+        while self.m_manager.Valid(temp_row_down, temp_col_down) and self.cmu.cost_map[temp_row_down][
+            temp_col_down] > SPHERE_INDICATE:
+            counter = counter + 1
+            temp_row_down = temp_row_down + direction[0]
+            temp_col_down = temp_col_down + direction[1]
+        center = (int((temp_row_top + temp_row_down) // 2), int((temp_col_down + temp_col_down) // 2))
+        return counter, center
+
+    def AddSphere(self, _row, _col):
+        directions = [(1, 0), (0, 1)]
+        left = False
+        for direction in directions:
+            opposite_direction = self.OppositeDirection(direction)
+            cur_counter, cur_center = self.Count(_row, _col, direction)
+            if cur_counter < GOOD_LINE:
+                continue
+            left_counter, _ = self.Count(cur_counter[0] + opposite_direction[0],
+                                                   cur_center[1] + opposite_direction[1], direction)
+            right_counter, _ = self.Count(cur_counter[0] - opposite_direction[0],
+                                                     cur_center[1] - opposite_direction[1], direction)
+            if left_counter - DIFF <= cur_counter <= DIFF + right_counter:  # we would like to get the center of the smallest line
+                while self.m_manager.Valid(cur_center[0], cur_center[1]) and self.cmu.cost_map[cur_center[0]][
+                    cur_center[1]] > SPHERE_INDICATE:
+                    cur_center = (cur_counter[0] + opposite_direction[0], cur_center[1] + opposite_direction[1])
+                    left = True
+            elif left_counter + DIFF <= cur_counter <= DIFF - right_counter:
+                while self.m_manager.Valid(cur_center[0], cur_center[1]) and self.cmu.cost_map[cur_center[0]][
+                    cur_center[1]] > SPHERE_INDICATE:
+                    cur_center = (cur_counter[0] - opposite_direction[0], cur_center[1] - opposite_direction[1])
+            else:
+                return
+            if left:
+                center = (
+                    cur_center[0] + RADIUS * (-opposite_direction[0]),
+                    cur_center[0] + RADIUS * (-opposite_direction[1]))
+            else:
+                center = (
+                    cur_center[0] + RADIUS * (opposite_direction[0]), cur_center[0] + RADIUS * (opposite_direction[1]))
+            self.m_founds_spheres.append(center)
+
+    def UpdateMap(self):
+        # we can look just at local or 60X60 map at the global from cur pos.
+        # current_global_cm = deepcopy(self.cmu.cost_map) #maybe need to copy for un-update
+        cur_map = np.subtract(self.cmu.cost_map - self.ms.map_arr)
+        _row = self.m_manager.cur_pos[0] - SEEN_SIZE
+        _col = self.m_manager.cur_pos[1] - SEEN_SIZE
+        for j in range(2 * SEEN_SIZE):
+            for i in range(2 * SEEN_SIZE):
+                if self.m_manager.Valid(_row, _col) and cur_map[_row][_col] > SPHERE_INDICATE:
+                    if self.m_manager.WallCheck(_row, _col)[0] == True:
+                        self.WallHandler(_row, _col, cur_map)
+                    elif self.OldSphere(_row, _col) == False:  # if it is new sphere we add it, otherwise shift and cont
+                        self.AddSphere(_row, _col)
+                    _row = _row + 1
+                    _col = _col + 1
+
+    def WallHandler(self, _row, _col, cur_map):
+        directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        for direction in directions:
+            cur_row = _row
+            cur_col = _col
+            while self.m_manager.Valid(cur_row, cur_col) and cur_map[cur_row][cur_col] > SPHERE_INDICATE:
+                cur_map[cur_row][cur_col] = 0
+                cur_row = _row + direction[0]
+                cur_col = _col + direction[1]
+
+    def PointShifter(self, source_x, shifed_x):
+        if source_x < shifed_x:
+            return 1
+        elif source_x == shifed_x:
+            return 0
+        else:
+            return -1
+
+    # if the new point is close to found src we should shift the old center closer to the point
+    def OldSphere(self, _row, _col):
+        for sphere in self.m_founds_spheres:
+            if self.m_manager.InMyArea(_row, _col, SPHERE_SIZE, sphere):
+                return True
+            eDistance = dist([_row, _col], [sphere[0], sphere[1]])
+            if eDistance < SHIFT_INDICATE:
+                shifted_src = (
+                    sphere[0] + self.PointShifter(sphere[0], _row), sphere[1] + self.PointShifter(sphere[1], _col))
+                i = 0
+                while i < len(self.m_founds_spheres):
+                    self.m_founds_spheres[i].replace(sphere, shifted_src)
+                    i = i + 1
+                return True
+        return False
 
 
 class Inspect:
@@ -201,7 +353,7 @@ class Inspect:
     def Mark(self, x_dest, y_dest, zero_indicate):
         current_square = SEEN_SIZE
         while current_square > 0:
-            if self.InMyArea(x_dest, y_dest, current_square) == True:
+            if self.controller.InMyArea(x_dest, y_dest, current_square, self.controller.cur_pos) == True:
                 current_square = current_square - 1
                 continue
             break
@@ -222,18 +374,13 @@ class Inspect:
                 if self.controller.Valid(row, column) and self.MyMap[row][column] == 0:
                     self.MyMap[row][column] = -1
 
-    def InMyArea(self, row, col, square_size):
-        x_dis = abs(row - self.controller.cur_pos[0])
-        y_dis = abs(col - self.controller.cur_pos[1])
-        if x_dis < square_size and y_dis < square_size:
-            return True
-        return False
-
     def FindBestZero(self):
         for row in range(self.controller.ms.shape[0]):
             for col in range(self.controller.ms.shape[1]):
                 if self.controller.Valid(col, row) == True and self.MyMap[col][row] == 0 and (
-                        col, row) not in self.notAvailAble and self.InMyArea(col, row, SEEN_SIZE) == False and \
+                        col, row) not in self.notAvailAble and self.controller.InMyArea(col, row,
+                                                                                        SEEN_SIZE,
+                                                                                        self.controller.cur_pos) == False and \
                         self.ZerosWallCheck(col, row)[0] == False:
                     return [col, row]
 
@@ -300,6 +447,7 @@ class Inspect:
             # self.MarkVisited(DirectionList[1], DirectionList[2], DirectionList[3])
             self.Mark(x_y[0], x_y[1], False)
             self.controller.Move(xy[0], xy[1])
+            # self.cmu.show_map()
             # print(self.controller.ms.map_to_position(x_y))
             # print(DirectionList[0].Pos[0] * DirectionList[0].value, DirectionList[0].Pos[1] * DirectionList[0].value)
             # self.controller.Move(self.controller.cur_pos[0] + DirectionList[0].Pos[0] * DirectionList[0].value, self.controller.cur_pos[1] + DirectionList[0].Pos[1] * DirectionList[0].value)
@@ -322,6 +470,9 @@ def inspection_advanced():
 
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
+    # msg_to_cf = "'move':'1', 'psi':'{}, 'x':'{}', 'y':'{}', 'z':'{}'".format(0, 0, 0, 0.5)
+    # print(msg_to_cf)
+    # exit()
     check = Inspect()
     rate = rospy.Rate(10)
     rospy.Subscriber("/odom", Odometry, check.controller.GetPos)

@@ -15,7 +15,6 @@ import actionlib
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 import copy
 
-WALL = 50
 STEP_SIZE = 60
 WALL_DIST = 5
 
@@ -106,6 +105,13 @@ class Manager:
     def Valid(self, i, j):
         info = self.ms.map_data.info
         return i >= 0 and i < info.height and j >= 0 and j < info.width
+
+    def InMyArea(self, row, col, square_size, center):
+        x_dis = abs(row - center[0])
+        y_dis = abs(col - center[1])
+        if x_dis < square_size and y_dis < square_size:
+            return True
+        return False
 
 # if __name__ == '__main__':
 #     check=Manager()
