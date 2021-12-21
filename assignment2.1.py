@@ -14,13 +14,15 @@ GOOD_LINE = 5
 TH = 7
 WALL = 80
 SEEN_SIZE = 50
-RADIUS = 10
+RADIUS = 10  # to check if in center of sphere area
+COVER_RADIUS = 13  # to mark sphere around it
 SPHERE_SIZE = 20
 LINE_INDICATE = 10
 SPHERE_INDICATE = 80
 WALL_DIST = 5  # same as manager param!
 SHIFT_INDICATE = 12  # for indicate shifted circle
-DIFF = 2
+DIFF = 3
+CLOSE_CENTER = 8
 
 
 class Direction:
@@ -67,41 +69,11 @@ class SphereHandler:
         self.m_founds_spheres = []  # center of exposed spheres
         self.m_manager = manager
 
-    # # need to rechange the function!!!first indicate if it is top or bottom point by the dis in the caller function,
-    # # after you know that is bottom for example you take the bottom_point and take about until 10 steps down and check for
-    # # a sphere indicate at row, you get the distance if it is legal(for now it is 4-10) return the (x,y) with the
-    # # appropriate dist , than at caller you should make a symmetric with given x,y and the known point
-    # def GetDistLine(self, x_top_point, y_top_point, opposite_direction):
-    #     dist_from_top = 0
-    #     x_top = x_top_point
-    #     y_top = y_top_point
-    #     current = 0
-    #     if abs(opposite_direction[0]) == 1:
-    #         direction = (0, 1)
-    #     else:
-    #         direction = (1, 0)
-    #     for direct in [direction, (-direction[0], -direction[1])]:
-    #         while self.m_manager.Valid(x_top, y_top) and self.cmu.cost_map[x_top][y_top] > SPHERE_INDICATE:
-    #             is_circle = False
-    #             temp_x = x_top
-    #             temp_y = y_top
-    #             if is_circle:
-    #                 current = current + 1
-    #             for i in range(int(SPHERE_SIZE + 2 // 2)):
-    #                 if self.m_manager.Valid(temp_x, temp_y) and self.cmu.cost_map[temp_x][temp_y] > SPHERE_INDICATE:
-    #                     is_circle = True
-    #                     break
-    #                 temp_x = temp_x + direct[0]
-    #                 temp_y = temp_y + direct[1]
-    #             x_top = x_top + opposite_direction[0]
-    #             y_top = y_top + opposite_direction[1]
-    #             dist_from_top = dist_from_top + 1
-
     def OppositeDirection(self, direction):
         if abs(direction[0]) == 1:
-            opp = (0, 1)
+            opp = [0, 1]
         else:
-            opp = (1, 0)
+            opp = [1, 0]
         return opp
 
     def Count(self, row, col, direction):
@@ -109,68 +81,123 @@ class SphereHandler:
         temp_row_top = row
         temp_col_top = col
         # first we want to get the far point at the row\column that have sphere indicate
-        while self.m_manager.Valid(temp_row_top, temp_col_top) and self.cmu.cost_map[temp_row_top][
-            temp_col_top] > SPHERE_INDICATE:
+        while self.m_manager.Valid(temp_row_top, temp_col_top) == True and self.cmu.cost_map[temp_row_top][
+            temp_col_top] > SPHERE_INDICATE and self.m_manager.WallCheck(temp_row_top, temp_col_top)[0] == False:
             temp_row_top = temp_row_top + direction[0]
             temp_col_top = temp_col_top + direction[1]
-        direction[0], direction[1] = -direction[0], -direction[1]
-        temp_row_down = temp_row_top + direction[0]
-        temp_col_down = temp_col_top + direction[0]
-        while self.m_manager.Valid(temp_row_down, temp_col_down) and self.cmu.cost_map[temp_row_down][
-            temp_col_down] > SPHERE_INDICATE:
+        temp_row_down = temp_row_top - direction[0]
+        temp_col_down = temp_col_top - direction[1]
+        while self.m_manager.Valid(temp_row_down, temp_col_down) == True and self.cmu.cost_map[temp_row_down][
+            temp_col_down] > SPHERE_INDICATE and self.m_manager.WallCheck(temp_row_down, temp_col_down)[0] == False:
             counter = counter + 1
-            temp_row_down = temp_row_down + direction[0]
-            temp_col_down = temp_col_down + direction[1]
-        center = (int((temp_row_top + temp_row_down) // 2), int((temp_col_down + temp_col_down) // 2))
+            temp_row_down = temp_row_down - direction[0]
+            temp_col_down = temp_col_down - direction[1]
+        center = [int((temp_row_top + temp_row_down) // 2), int((temp_col_down + temp_col_down) // 2)]
         return counter, center
 
     def AddSphere(self, _row, _col):
-        directions = [(1, 0), (0, 1)]
+        directions = [[1, 0], [0, 1]]
         left = False
         for direction in directions:
             opposite_direction = self.OppositeDirection(direction)
             cur_counter, cur_center = self.Count(_row, _col, direction)
             if cur_counter < GOOD_LINE:
                 continue
-            left_counter, _ = self.Count(cur_counter[0] + opposite_direction[0],
-                                                   cur_center[1] + opposite_direction[1], direction)
-            right_counter, _ = self.Count(cur_counter[0] - opposite_direction[0],
-                                                     cur_center[1] - opposite_direction[1], direction)
-            if left_counter - DIFF <= cur_counter <= DIFF + right_counter:  # we would like to get the center of the smallest line
+            left_counter, _ = self.Count(cur_center[0] + opposite_direction[0],
+                                         cur_center[1] + opposite_direction[1], direction)
+            right_counter, _ = self.Count(cur_center[0] - opposite_direction[0],
+                                          cur_center[1] - opposite_direction[1], direction)
+            if 1 < left_counter - cur_counter <= DIFF and 1 < cur_counter - right_counter <= DIFF:
                 while self.m_manager.Valid(cur_center[0], cur_center[1]) and self.cmu.cost_map[cur_center[0]][
                     cur_center[1]] > SPHERE_INDICATE:
-                    cur_center = (cur_counter[0] + opposite_direction[0], cur_center[1] + opposite_direction[1])
+                    cur_center = (cur_center[0] - opposite_direction[0], cur_center[1] - opposite_direction[1])
                     left = True
-            elif left_counter + DIFF <= cur_counter <= DIFF - right_counter:
+            elif 1 < right_counter - cur_counter <= DIFF and 1 < cur_counter - left_counter <= DIFF:
                 while self.m_manager.Valid(cur_center[0], cur_center[1]) and self.cmu.cost_map[cur_center[0]][
                     cur_center[1]] > SPHERE_INDICATE:
-                    cur_center = (cur_counter[0] - opposite_direction[0], cur_center[1] - opposite_direction[1])
+                    cur_center = (cur_center[0] + opposite_direction[0], cur_center[1] + opposite_direction[1])
             else:
                 return
-            if left:
-                center = (
-                    cur_center[0] + RADIUS * (-opposite_direction[0]),
-                    cur_center[0] + RADIUS * (-opposite_direction[1]))
+            if left == True:
+                center = [
+                    cur_center[0] + RADIUS * (opposite_direction[0]),
+                    cur_center[1] + RADIUS * (opposite_direction[1])]
             else:
-                center = (
-                    cur_center[0] + RADIUS * (opposite_direction[0]), cur_center[0] + RADIUS * (opposite_direction[1]))
+                center = [
+                    cur_center[0] - RADIUS * (opposite_direction[0]),
+                    cur_center[1] - RADIUS * (opposite_direction[1])]
             self.m_founds_spheres.append(center)
+
+    def Optimize(self, sphere_center1, sphere_center2):
+        if sphere_center1 in self.m_founds_spheres and sphere_center2 in self.m_founds_spheres:
+            if dist([sphere_center1[0], sphere_center1[1]],
+                    [sphere_center2[0], sphere_center2[1]]) <= DIFF:
+                new_center = [int((sphere_center1[0] + sphere_center2[0]) // 2),
+                              int((sphere_center1[1] + sphere_center2[1]) // 2)]
+                self.m_founds_spheres.remove(sphere_center1)
+                self.m_founds_spheres.remove(sphere_center2)
+                self.m_founds_spheres.append(new_center)
+            elif self.m_manager.InMyArea(sphere_center1[0], sphere_center1[1], COVER_RADIUS, sphere_center2):
+                sphere1_counter = 0
+                sphere2_counter = 0
+                x_1, x_2, y_1, y_2 = 0, 0, 0, 0
+                for direct in [[0, 1], [1, 0], [0, -1], [-1, 0]]:
+                    for i in range(RADIUS):
+                        x_1 = sphere_center1[0] + i * direct[0]
+                        y_1 = sphere_center1[1] + i * direct[1]
+                        print(self.cmu.cost_map[x_1][y_1])
+                        print('2')
+                        if self.m_manager.Valid(x_1, y_1) and self.cmu.cost_map[x_1][y_1] > SPHERE_INDICATE:
+                            if self.m_manager.WallCheck(x_1, y_1)[0] == False:
+                                sphere1_counter = sphere1_counter + 1
+                        x_2 = sphere_center2[0] + i * direct[0]
+                        y_2 = sphere_center2[1] + i * direct[1]
+                        print(self.cmu.cost_map[x_2][y_2])
+                        if self.m_manager.Valid(x_2, y_2) and self.cmu.cost_map[x_2][y_2] > SPHERE_INDICATE:
+                            if self.m_manager.WallCheck(x_2, y_2)[0] == False:
+                                sphere2_counter = sphere2_counter + 1
+                for direct in [[1, 1], [-1, 1], [-1, -1], [1, -1]]:
+                    for i in range(COVER_RADIUS // 2):
+                        x_1 = sphere_center1[0] + i * direct[0]
+                        y_1 = sphere_center1[1] + i * direct[1]
+                        print(self.cmu.cost_map[x_1][y_1])
+                        print('2')
+                        if self.m_manager.Valid(x_1, y_1) and self.cmu.cost_map[x_1][y_1] > SPHERE_INDICATE:
+                            if self.m_manager.WallCheck(x_1, y_1)[0] == False:
+                                sphere1_counter = sphere1_counter + 1
+                        x_2 = sphere_center2[0] + i * direct[0]
+                        y_2 = sphere_center2[1] + i * direct[1]
+                        print(self.cmu.cost_map[x_2][y_2])
+                        if self.m_manager.Valid(x_2, y_2) and self.cmu.cost_map[x_2][y_2] > SPHERE_INDICATE:
+                            if self.m_manager.WallCheck(x_2, y_2)[0] == False:
+                                sphere2_counter = sphere2_counter + 1
+                if sphere1_counter > sphere2_counter:
+                    self.m_founds_spheres.remove(sphere_center2)
+                else:
+                    self.m_founds_spheres.remove(sphere_center1)
+
+    # if they far and on the same circle, we take the one with more data(more inidicates near her)
 
     def UpdateMap(self):
         # we can look just at local or 60X60 map at the global from cur pos.
         # current_global_cm = deepcopy(self.cmu.cost_map) #maybe need to copy for un-update
-        cur_map = np.subtract(self.cmu.cost_map - self.ms.map_arr)
-        _row = self.m_manager.cur_pos[0] - SEEN_SIZE
-        _col = self.m_manager.cur_pos[1] - SEEN_SIZE
-        for j in range(2 * SEEN_SIZE):
-            for i in range(2 * SEEN_SIZE):
-                if self.m_manager.Valid(_row, _col) and cur_map[_row][_col] > SPHERE_INDICATE:
-                    if self.m_manager.WallCheck(_row, _col)[0] == True:
-                        self.WallHandler(_row, _col, cur_map)
-                    elif self.OldSphere(_row, _col) == False:  # if it is new sphere we add it, otherwise shift and cont
-                        self.AddSphere(_row, _col)
-                    _row = _row + 1
-                    _col = _col + 1
+        cur_map = np.subtract(self.cmu.cost_map, self.ms.map_arr)
+        # changed SEEN_SIZE TO WHOLE MAP IF ZERO MOVE WAS USED.
+        i = -SEEN_SIZE
+        while i < SEEN_SIZE:
+            i = i + 1
+            j = -SEEN_SIZE
+            while j < SEEN_SIZE:
+                j = j + 1
+                row = self.m_manager.cur_pos[0] + i
+                column = self.m_manager.cur_pos[1] + j
+                if self.m_manager.Valid(row, column) and cur_map[row][column] > SPHERE_INDICATE:
+                    if self.m_manager.WallCheck(row, column)[0] == True:
+                        self.WallHandler(row, column, cur_map)
+                    elif self.OldSphere(row,
+                                        column) == False:  # if it is new sphere we add it, otherwise shift and cont
+                        self.AddSphere(row, column)
+        [self.Optimize(p1, p2) for p1 in self.m_founds_spheres for p2 in self.m_founds_spheres if p1 != p2]
 
     def WallHandler(self, _row, _col, cur_map):
         directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
@@ -193,17 +220,24 @@ class SphereHandler:
     # if the new point is close to found src we should shift the old center closer to the point
     def OldSphere(self, _row, _col):
         for sphere in self.m_founds_spheres:
+            if self.m_manager.InMyArea(_row, _col, RADIUS, sphere):
+                return True
             if self.m_manager.InMyArea(_row, _col, SPHERE_SIZE, sphere):
-                return True
-            eDistance = dist([_row, _col], [sphere[0], sphere[1]])
-            if eDistance < SHIFT_INDICATE:
-                shifted_src = (
-                    sphere[0] + self.PointShifter(sphere[0], _row), sphere[1] + self.PointShifter(sphere[1], _col))
-                i = 0
-                while i < len(self.m_founds_spheres):
-                    self.m_founds_spheres[i].replace(sphere, shifted_src)
-                    i = i + 1
-                return True
+                eDistance = dist([_row, _col], [sphere[0], sphere[1]])
+                if RADIUS + 1 < eDistance <= SHIFT_INDICATE:
+                    shifted_src = [
+                        sphere[0] + self.PointShifter(sphere[0], _row), sphere[1] + self.PointShifter(sphere[1], _col)]
+                    self.m_founds_spheres.remove(sphere)
+                    self.m_founds_spheres.append(shifted_src)
+                    return True
+                # elif eDistance <= CLOSE_CENTER:
+                #     shifted_src = [
+                #         sphere[0] - self.PointShifter(sphere[0], _row), sphere[1] - self.PointShifter(sphere[1], _col)]
+                #     self.m_founds_spheres.remove(sphere)
+                #     self.m_founds_spheres.append(shifted_src)
+                #     return True
+                # elif CLOSE_CENTER < eDistance <= RADIUS + 1:
+                #     return True
         return False
 
 
@@ -213,10 +247,11 @@ class Inspect:
         # self.pose = 0, 0
         self.controller = mn.Manager()
         self.MyMap = self.controller.ms.map_arr
-        self.cmu = CostmapUpdater()
         self.lastCoord = None
         self.MaxMove = max(self.controller.ms.shape[0], self.controller.ms.shape[1])
         self.notAvailAble = []
+        self.m_sph_handler = SphereHandler(self.controller)
+        self.first = True
 
     def ZerosWallCheck(self, row, col):
         directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
@@ -226,16 +261,6 @@ class Inspect:
                         self.MyMap[row + direction[0] * i][col + direction[1] * i] != 0:
                     return [True, direction]
         return [False, (0, 0)]
-
-    # indicate if there is wall in WALL_DIST far from the given coordinates
-    # def WallCheck(self, row, col):
-    #     directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
-    #     for direction in directions:
-    #         for i in range(WALL_DIST):
-    #             if self.controller.Valid(row + direction[0] * i, col + direction[1] * i) and \
-    #                     self.MyMap[row + direction[0] * i][col + direction[1] * i] == 100:
-    #                 return [True, direction]
-    #     return [False, (0, 0)]
 
     # calculate the closest wall with given direction and given position
     def GetDistance(self, i, j, row, col):
@@ -383,17 +408,6 @@ class Inspect:
                                                                                         self.controller.cur_pos) == False and \
                         self.ZerosWallCheck(col, row)[0] == False:
                     return [col, row]
-
-                # and self.cmu.cost_map[row][col] < SPHERE_INDICATE
-                # i, j, second_dis = self.ClosestWallOtherSides(0, 0, col, row,
-                #                                               True)  # need to add sphere handler function
-                # if second_dis == 0:
-                #     self.notAvailAble.append((col, row))
-                #     continue
-                # elif second_dis < 30:
-                #     return [col, row]
-                # else:
-                #     return [row + j * (second_dis - SEEN_SIZE), col + i * (second_dis - SEEN_SIZE)]
         return [self.controller.cur_pos[0], self.controller.cur_pos[1]]
 
     def GetBestDist(self, direction, dest):
@@ -413,9 +427,68 @@ class Inspect:
         return [cur_row + i * ahead, cur_col + j * ahead]
 
     # check also spheres
+    def SphereCheck(self, coord):
+        for sphere in self.m_sph_handler.m_founds_spheres:
+            if self.controller.InMyArea(coord[0], coord[1], COVER_RADIUS, sphere):
+                return [True, sphere]
+        return [False, None]
+
+    def SphereShifter(self, coord, direction, sphere_center):
+        opp_direction = self.m_sph_handler.OppositeDirection(direction)
+        temp_row_top, temp_row_down = coord[0], coord[0]
+        temp_col_top, temp_col_down = coord[1], coord[1]
+        counter_top, row_top, col_top, counter_down, row_down, col_down = 0, 0, 0, 0, 0, 0
+        # first we want to get the far point at the row\column that have sphere indicate
+        while self.controller.Valid(temp_row_top, temp_col_top) == True and self.controller.InMyArea(temp_row_top,
+                                                                                                     temp_col_top,
+                                                                                                     COVER_RADIUS,
+                                                                                                     sphere_center) == True and \
+                self.controller.WallCheck(
+                    temp_row_top, temp_col_top)[0] == False:
+            temp_row_top = temp_row_top + opp_direction[0]
+            temp_col_top = temp_col_top + opp_direction[1]
+        counter_top = 0
+        row_top = temp_row_top
+        col_top = temp_col_top
+        while self.controller.Valid(temp_row_top, temp_col_top) == True and \
+                self.m_sph_handler.cmu.cost_map[temp_row_top][
+                    temp_col_top] < SPHERE_INDICATE and self.controller.WallCheck(temp_row_top, temp_col_top)[
+            0] == False:
+            counter_top = counter_top + 1
+            temp_row_top = temp_row_top + opp_direction[0]
+            temp_col_top = temp_col_top + opp_direction[1]
+        temp_row_down = coord[0]
+        temp_col_down = coord[1]
+        while self.controller.Valid(temp_row_down, temp_col_down) == True and self.controller.InMyArea(temp_row_down,
+                                                                                                       temp_col_down,
+                                                                                                       COVER_RADIUS,
+                                                                                                       sphere_center) == True and \
+                self.controller.WallCheck(
+                    temp_row_down, temp_col_down)[0] == False:
+            temp_row_down = temp_row_down - opp_direction[0]
+            temp_col_down = temp_col_down - opp_direction[1]
+        counter_down = 0
+        row_down = temp_row_down
+        col_down = temp_col_down
+        while self.controller.Valid(temp_row_down, temp_col_down) == True and \
+                self.m_sph_handler.cmu.cost_map[temp_row_down][
+                    temp_col_down] < SPHERE_INDICATE and self.controller.WallCheck(temp_row_down,
+                                                                                   temp_col_down)[0] == False:
+            counter_down = counter_down + 1
+            temp_row_down = temp_row_down - opp_direction[0]
+            temp_col_down = temp_col_down - opp_direction[1]
+        if counter_top > counter_down:
+            step = min(COVER_RADIUS // 2, int(counter_top // 2))
+            return row_top + step * opp_direction[0], col_top + step * opp_direction[1]
+        else:
+            step = min(COVER_RADIUS // 2, int(counter_down // 2))
+            return np.array([row_down + step * (-opp_direction[0]), col_down + step * (-opp_direction[1])])
 
     def chooseDirection(self):
         if self.controller.cur_pos is not None:
+            if self.first == True:
+                self.m_sph_handler.UpdateMap()
+                self.first = False
             print("my current position: ", self.controller.cur_pos)
             left = Direction('left', self.step(0, -1), (0, -1))
             right = Direction('right', self.step(0, 1), (0, 1))
@@ -435,22 +508,18 @@ class Inspect:
                 row, col = self.GetBestDist(wall_check[1], x_y)  # get away from wall in -direct move
                 x_y[0] = row
                 x_y[1] = col
-                # map_move = self.controller.cur_pos + x_y
-            # self.controller.ms.show_map(map_move)
+            check_sphere = self.SphereCheck(x_y)
+            if check_sphere[0]:
+                x_y = self.SphereShifter(x_y, DirectionList[0].direc_, check_sphere[1])
             xy = self.controller.ms.map_to_position(x_y)
             x_y = self.controller.ms.position_to_map(xy)
             print("my real position: ", x_y)
             xy = xy[1], xy[0]
-            # xy = convert(xy[0], xy[1])
-            # self.controller.Move(0, 0)
             print("moving to: ", x_y)
-            # self.MarkVisited(DirectionList[1], DirectionList[2], DirectionList[3])
             self.Mark(x_y[0], x_y[1], False)
             self.controller.Move(xy[0], xy[1])
-            # self.cmu.show_map()
-            # print(self.controller.ms.map_to_position(x_y))
-            # print(DirectionList[0].Pos[0] * DirectionList[0].value, DirectionList[0].Pos[1] * DirectionList[0].value)
-            # self.controller.Move(self.controller.cur_pos[0] + DirectionList[0].Pos[0] * DirectionList[0].value, self.controller.cur_pos[1] + DirectionList[0].Pos[1] * DirectionList[0].value)
+            if dist([xy[0], xy[1]], [self.controller.cur_pos[0], self.controller.cur_pos[1]]) >= DIFF:
+                self.m_sph_handler.UpdateMap()
 
 
 def vacuum_cleaning():
