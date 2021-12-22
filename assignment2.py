@@ -1,78 +1,123 @@
 #!/usr/bin/env python
 import numpy as np
 import rospy
-from nav_msgs.msg import OccupancyGrid, MapMetaData, Odometry
-from matplotlib import pyplot as plt
+import Manager as mn
 
-WALL = 50
-STEP_SIZE = 60
+GOOD_LINE = 5
+TH = 7
+WALL = 80
+SPIRAL_SIZE = 30
+RADIUS = 10  # to check if in center of sphere area
+COVER_RADIUS = 13  # to mark sphere around it
+SPHERE_SIZE = 20
+LINE_INDICATE = 10
+SPHERE_INDICATE = 80
+WALL_DIST = 5  # same as manager param!
+SHIFT_INDICATE = 12  # for indicate shifted circle
+DIFF = 3
+CLOSE_CENTER = 8
+
+BIGGER_SQUARE = 6
 
 
-class Direction:
-    def __init__(self, name, value):
-        self.name = name
-        self.value = value
-
-    def getVal(self):
-        return self.value
-
-
-class Ben:
+class Cleaning:
     def __init__(self):
-        self.map = None
-        self.width = 0
-        self.height = 0
-        self.origin = None
-        self.pose = [0, 0]
-
-    def callbackA(self, data: OccupancyGrid):
-        #if (self.width != 0 or self.height != 0) and self.map is None:
-         #   self.map = np.reshape(data.data, (self.width, self.height))
-        plt.imshow(self.map, interpolation='nearest')
-        plt.show()
-
-    def callbackB(self, data: OccupancyGrid):
-        if self.map is not None:
-            arr = np.reshape(data.data, (384, 384))
-            # arr = np.reshape(data.data, (60, 60))
-            i = 0
-            while i < 300:
-                arr[7][i] = 100
-                i = i + 1
-            # plt.imshow(arr, interpolation='nearest')
-            # plt.show()
-
-    def callbackC(self, data: MapMetaData):
-        self.width = data.width
-        self.height = data.height
-        self.origin = data.origin
-
-    def GetPos(self, data: Odometry):
-        self.pose[0] = data.pose.pose.position.x
-        self.pose[1] = data.pose.pose.position.y
+        self.controller = mn.Manager()
+        self.MyMap = self.controller.ms.map_arr
+        self.m_big_room_list = []
+        self.MaxMove = max(self.controller.ms.shape[0], self.controller.ms.shape[1])
 
     def step(self, i, j):
-        row = i
-        col = j
+        dis_from_wall = self.GetDistance(i, j, self.controller.cur_pos[0], self.controller.cur_pos[1])
+        estimate_dest = np.array(
+            [self.controller.cur_pos[0] + i * SPIRAL_SIZE, self.controller.cur_pos[1] + j * SPIRAL_SIZE])
+        NonCoverDist = dis_from_wall - SPIRAL_SIZE
+        if NonCoverDist <= 0 or NonCoverDist < SPHERE_SIZE:
+            return [self.MaxMove, [estimate_dest[0], estimate_dest[1]]]
+        return [dis_from_wall, [estimate_dest[0], estimate_dest[1]]]
+
+    def GetDistance(self, i, j, row, col):
         distance = 0
-        while self.x + row >= 0 and self.y + col >= 0 and self.map[self.x + row][self.y + col] < WALL:
+        if self.MyMap[row][col] < 0:
+            chck = 0
+            while chck < TH:
+                if self.controller.Valid(row + i * chck, col + j * chck) and self.MyMap[row + i * chck][
+                    col + j * chck] == 0:
+                    row, col = row + i * chck, col + j * chck
+                    distance = distance + chck
+                    break
+                chck = chck + 1
+            if chck >= TH:
+                return distance
+        while self.controller.Valid(row, col) and 0 <= self.MyMap[row][col] < WALL:
             distance = distance + 1
             col = col + j
             row = row + i
-        if self.x + row >= 0 and self.y + col >= 0 and self.map[self.x + row][self.y + col] == -1:
-            return self.width  # big number! -1 is a place that we already visited
-        if distance - STEP_SIZE <= 0:
-            return self.width  # big number!
-        return distance - STEP_SIZE
+        return distance
 
-    def chooseDirection(self):
-        left = Direction('left', self.step(0, -1))
-        right = Direction('right', self.step(0, 1))
-        up = Direction('up', self.step(1, 0))
-        down = Direction('down', self.step(-1, 0))
+    def Mark(self, x_dest, y_dest):
+        current_square = SPIRAL_SIZE
+        while current_square > 0:
+            if self.controller.InMyArea(x_dest, y_dest, current_square, self.controller.cur_pos) == True:
+                current_square = current_square - 1
+                continue
+            break
+        if current_square <= WALL_DIST:
+            return
+        current_square = current_square - WALL_DIST
+        i = -current_square
+        while i < current_square:
+            i = i + 1
+            j = -current_square
+            while j < current_square:
+                j = j + 1
+                row = self.controller.cur_pos[0] + i
+                column = self.controller.cur_pos[1] + j
+                if self.controller.Valid(row, column) and self.MyMap[row][column] == 0:
+                    self.MyMap[row][column] = -1
+
+    def GetBestDist(self, direction, dest):
+        i, j = -direction[0], -direction[1]
+        cur_row, cur_col = dest[0], dest[1]
+        wall_other_side = SPIRAL_SIZE * 2
+        for step in range(SPIRAL_SIZE - WALL_DIST):
+            if self.controller.Valid(cur_row + i * step, cur_col + j * step) and self.MyMap[cur_row + i * step][
+                cur_col + j * step] != 0:
+                wall_other_side = step
+                break
+        ahead = min(SPIRAL_SIZE - WALL_DIST, int(wall_other_side // 2))
+        if ahead < WALL_DIST:
+            self.Mark(cur_row, cur_col)
+            return [self.controller.cur_pos[0], self.controller.cur_pos[1]]
+        return [cur_row + i * ahead, cur_col + j * ahead]
+
+    def ZerosWallCheck(self, row, col):
+        directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        for direction in directions:
+            for i in range(2 * WALL_DIST):
+                if self.controller.Valid(row + direction[0] * i, col + direction[1] * i) and \
+                        self.MyMap[row + direction[0] * i][col + direction[1] * i] != 0:
+                    return [True, direction]
+        return [False, (0, 0)]
+
+    def FindBestZero(self):
+        for row in range(self.controller.ms.shape[0]):
+            for col in range(self.controller.ms.shape[1]):
+                if self.controller.Valid(col, row) == True and self.MyMap[col][row] == 0 and self.controller.InMyArea(col, row,
+                                                                                        SPIRAL_SIZE,
+                                                                                        self.controller.cur_pos) == False and \
+                        self.ZerosWallCheck(col, row)[0] == False:
+                    return [col, row]
+        return [self.controller.cur_pos[0], self.controller.cur_pos[1]]
+    def Move(self):
+        left = mn.Direction('left', self.step(0, -1), (0, -1))
+        right = mn.Direction('right', self.step(0, 1), (0, 1))
+        up = mn.Direction('up', self.step(1, 0), (1, 0))
+        down = mn.Direction('down', self.step(-1, 0), (-1, 0))
         DirectionList = [left, right, up, down]
-        DirectionList.sort(key=Direction.getVal)
-        print(DirectionList[0].name)
+        DirectionList.sort(key=mn.Direction.getVal)
+        if DirectionList[0].value == self.MaxMove:
+            next_move = self.FindBestZero()
 
 
 def vacuum_cleaning():
@@ -92,23 +137,10 @@ def inspection_advanced():
 
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
-    ben = Ben()
-    rospy.init_node('listener', anonymous=True)
-    rospy.Subscriber("/move_base/local_costmap/costmap", OccupancyGrid, ben.callbackA)
-    rospy.Subscriber("/odom", Odometry, ben.GetPos)
-    rospy.Subscriber("/map", OccupancyGrid, ben.callbackA)
-    rospy.Subscriber("/map_metadata", MapMetaData, ben.callbackC)
-    #ben.chooseDirection()
+    print('start inspection')
+    check = Cleaning()
+    rate = rospy.Rate(10)
+    while not rospy.is_shutdown():
+        first = check.firstMove()
+        rate.sleep()
     rospy.spin()
-
-    # exec_mode = sys.argv[1]
-    # print('exec_mode:' + exec_mode)
-    # if exec_mode == 'cleaning':
-    #     vacuum_cleaning()
-    # elif exec_mode == 'inspection':
-    #     inspection()
-    # elif exec_mode == 'inspection_advanced':
-    #     inspection_advanced()
-    # else:
-    #     print("Code not found")
-    #     raise NotImplementedError
