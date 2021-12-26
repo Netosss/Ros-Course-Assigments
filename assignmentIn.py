@@ -52,13 +52,116 @@ class CostmapUpdater:
             plt.show()
 
 
+class MovementHandler:
+    def __init__(self, manager: mn.Manager):
+        self.controller = manager
+        self.MyMap = self.controller.ms.map_arr
+        self.MaxMove = max(self.controller.ms.shape[0], self.controller.ms.shape[1])
+        self.notAvailAble = []
+
+    def ZerosWallCheck(self, row, col, wall=WALL_DIST):
+        directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        for direction in directions:
+            for i in range(2 * wall):
+                if self.controller.Valid(row + direction[0] * i, col + direction[1] * i) and \
+                        self.MyMap[row + direction[0] * i][col + direction[1] * i] != 0:
+                    return [True, direction]
+        return [False, (0, 0)]
+
+    # calculate the closest wall with given direction and given position
+    def GetDistance(self, i, j, row, col):
+        distance = 0
+        if self.MyMap[row][col] < 0:
+            chck = 0
+            while chck < TH:
+                if self.controller.Valid(row + i * chck, col + j * chck) and self.MyMap[row + i * chck][
+                    col + j * chck] == 0:
+                    row, col = row + i * chck, col + j * chck
+                    distance = distance + chck
+                    break
+                chck = chck + 1
+            if chck >= TH:
+                return distance
+        while self.controller.Valid(row, col) and 0 <= self.MyMap[row][col] < WALL:
+            distance = distance + 1
+            col = col + j
+            row = row + i
+        return distance
+
+    def Mark(self, x_dest, y_dest, seen=SEEN_SIZE, wall=WALL_DIST, cur_pos=None):
+        if cur_pos is None:
+            cur_pos = self.controller.cur_pos
+        current_square = seen
+        while current_square > 0:
+            if self.controller.InMyArea(x_dest, y_dest, current_square, cur_pos) == True:
+                current_square = current_square - 1
+                continue
+            break
+        if current_square <= wall:
+            return
+        current_square = current_square - wall
+        i = -current_square
+        while i < current_square:
+            i = i + 1
+            j = -current_square
+            while j < current_square:
+                j = j + 1
+                row = cur_pos[0] + i
+                column = cur_pos[1] + j
+                if self.controller.Valid(row, column) and self.MyMap[row][column] == 0:
+                    self.MyMap[row][column] = -1
+
+    def FindBestZero(self, cost_map=None, seen=SEEN_SIZE, wall=WALL_DIST):
+        if cost_map is None:
+            cost_map = self.MyMap
+        for row in range(self.controller.ms.shape[0]):
+            for col in range(self.controller.ms.shape[1]):
+                if self.controller.Valid(col, row) == True and self.MyMap[col][row] == 0 and (
+                        col, row) not in self.notAvailAble and self.controller.InMyArea(col, row,
+                                                                                        seen,
+                                                                                        self.controller.cur_pos) == False and \
+                        self.ZerosWallCheck(col, row, wall)[0] == False and cost_map[row][col] < SPHERE_INDICATE:
+                    return [col, row]
+        return [self.controller.cur_pos[0], self.controller.cur_pos[1]]
+
+    def GetBestDist(self, direction, dest, wall=WALL_DIST, seen=SEEN_SIZE):
+        i, j = -direction[0], -direction[1]
+        cur_row, cur_col = dest[0], dest[1]
+        wall_other_side = seen * 2
+        for step in range(seen - wall):
+            if self.controller.Valid(cur_row + i * step, cur_col + j * step) and self.MyMap[cur_row + i * step][
+                cur_col + j * step] != 0:
+                wall_other_side = step
+                break
+        ahead = min(seen - wall, int(wall_other_side // 2))
+        if ahead < wall:
+            self.notAvailAble.append((cur_row, cur_col))
+            self.Mark(cur_row, cur_col)
+            return [self.controller.cur_pos[0], self.controller.cur_pos[1]]
+        return [cur_row + i * ahead, cur_col + j * ahead]
+
+    def step(self, i, j, seen=SEEN_SIZE, xy_pos=None):
+        x = self.controller.cur_pos[0]
+        y = self.controller.cur_pos[1]
+        size = SPHERE_SIZE
+        if xy_pos is not None:
+            x = xy_pos[0]
+            y = xy_pos[1]
+            size = SPHERE_SIZE - WALL_DIST
+        dis_from_wall = self.GetDistance(i, j, x, y)
+        estimate_dest = np.array([x + i * seen, y + j * seen])
+        NonCoverDist = dis_from_wall - seen
+        if NonCoverDist <= 0 or NonCoverDist < size:
+            return [self.MaxMove, [estimate_dest[0], estimate_dest[1]]]
+        return [dis_from_wall, [estimate_dest[0], estimate_dest[1]]]
+
+
 class SphereHandler:
     def __init__(self, manager: mn.Manager):
         self.cmu = CostmapUpdater()
         self.ms = mn.MapService()
         self.m_founds_spheres = []  # center of exposed spheres
         self.m_manager = manager
-
 
     def Count(self, row, col, direction):
         counter = 0
@@ -229,41 +332,9 @@ class Inspect:
 
     def __init__(self):
         self.controller = mn.Manager()
-        self.MyMap = self.controller.ms.map_arr
-        self.lastCoord = None
-        self.MaxMove = max(self.controller.ms.shape[0], self.controller.ms.shape[1])
-        self.notAvailAble = []
         self.m_sph_handler = SphereHandler(self.controller)
         self.first = True
-
-    def ZerosWallCheck(self, row, col):
-        directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
-        for direction in directions:
-            for i in range(2 * WALL_DIST):
-                if self.controller.Valid(row + direction[0] * i, col + direction[1] * i) and \
-                        self.MyMap[row + direction[0] * i][col + direction[1] * i] != 0:
-                    return [True, direction]
-        return [False, (0, 0)]
-
-    # calculate the closest wall with given direction and given position
-    def GetDistance(self, i, j, row, col):
-        distance = 0
-        if self.MyMap[row][col] < 0:
-            chck = 0
-            while chck < TH:
-                if self.controller.Valid(row + i * chck, col + j * chck) and self.MyMap[row + i * chck][
-                    col + j * chck] == 0:
-                    row, col = row + i * chck, col + j * chck
-                    distance = distance + chck
-                    break
-                chck = chck + 1
-            if chck >= TH:
-                return distance
-        while self.controller.Valid(row, col) and 0 <= self.MyMap[row][col] < WALL:
-            distance = distance + 1
-            col = col + j
-            row = row + i
-        return distance
+        self.move_alg = MovementHandler(self.controller)
 
     def printSpheres(self):
         while (True):
@@ -272,67 +343,10 @@ class Inspect:
             ts = ct.timestamp()
             print(spheres, "spheres detected at time", ts)
             time.sleep(30)
+            self.m_sph_handler.UpdateWholeMap()
 
     def printit(self):
         threading.Timer(0.0, self.printSpheres).start()
-
-    def step(self, i, j):
-        dis_from_wall = self.GetDistance(i, j, self.controller.cur_pos[0], self.controller.cur_pos[1])
-        estimate_dest = np.array(
-            [self.controller.cur_pos[0] + i * SEEN_SIZE, self.controller.cur_pos[1] + j * SEEN_SIZE])
-        NonCoverDist = dis_from_wall - SEEN_SIZE
-        if NonCoverDist <= 0 or NonCoverDist < SPHERE_SIZE:
-            return [self.MaxMove, [estimate_dest[0], estimate_dest[1]]]
-        return [dis_from_wall, [estimate_dest[0], estimate_dest[1]]]
-
-    def Mark(self, x_dest, y_dest):
-        current_square = SEEN_SIZE
-        while current_square > 0:
-            if self.controller.InMyArea(x_dest, y_dest, current_square, self.controller.cur_pos) == True:
-                current_square = current_square - 1
-                continue
-            break
-        if current_square <= WALL_DIST:
-            return
-        current_square = current_square - WALL_DIST
-        i = -current_square
-        while i < current_square:
-            i = i + 1
-            j = -current_square
-            while j < current_square:
-                j = j + 1
-                row = self.controller.cur_pos[0] + i
-                column = self.controller.cur_pos[1] + j
-                if self.controller.Valid(row, column) and self.MyMap[row][column] == 0:
-                    self.MyMap[row][column] = -1
-
-    def FindBestZero(self):
-        for row in range(self.controller.ms.shape[0]):
-            for col in range(self.controller.ms.shape[1]):
-                if self.controller.Valid(col, row) == True and self.MyMap[col][row] == 0 and (
-                        col, row) not in self.notAvailAble and self.controller.InMyArea(col, row,
-                                                                                        SEEN_SIZE,
-                                                                                        self.controller.cur_pos) == False and \
-                        self.ZerosWallCheck(col, row)[0] == False and self.m_sph_handler.cmu.cost_map[row][
-                    col] < SPHERE_INDICATE:
-                    return [col, row]
-        return [self.controller.cur_pos[0], self.controller.cur_pos[1]]
-
-    def GetBestDist(self, direction, dest):
-        i, j = -direction[0], -direction[1]
-        cur_row, cur_col = dest[0], dest[1]
-        wall_other_side = SEEN_SIZE * 2
-        for step in range(SEEN_SIZE - WALL_DIST):
-            if self.controller.Valid(cur_row + i * step, cur_col + j * step) and self.MyMap[cur_row + i * step][
-                cur_col + j * step] != 0:
-                wall_other_side = step
-                break
-        ahead = min(SEEN_SIZE - WALL_DIST, int(wall_other_side // 2))
-        if ahead < WALL_DIST:
-            self.notAvailAble.append((cur_row, cur_col))
-            self.Mark(cur_row, cur_col)
-            return [self.controller.cur_pos[0], self.controller.cur_pos[1]]
-        return [cur_row + i * ahead, cur_col + j * ahead]
 
     # check also spheres
     def SphereCheck(self, coord):
@@ -398,21 +412,20 @@ class Inspect:
                 self.printit()
                 self.m_sph_handler.UpdateMap()
                 self.first = False
-            left = mn.Direction('left', self.step(0, -1), (0, -1))
-            right = mn.Direction('right', self.step(0, 1), (0, 1))
-            up = mn.Direction('up', self.step(1, 0), (1, 0))
-            down =mn. Direction('down', self.step(-1, 0), (-1, 0))
+            left = mn.Direction('left', self.move_alg.step(0, -1), (0, -1))
+            right = mn.Direction('right', self.move_alg.step(0, 1), (0, 1))
+            up = mn.Direction('up', self.move_alg.step(1, 0), (1, 0))
+            down = mn.Direction('down', self.move_alg.step(-1, 0), (-1, 0))
             DirectionList = [left, right, up, down]
             DirectionList.sort(key=mn.Direction.getVal)
-            if DirectionList[0].value == self.MaxMove:
-                next_move = self.FindBestZero()
+            if DirectionList[0].value == self.move_alg.MaxMove:
+                next_move = self.move_alg.FindBestZero(self.m_sph_handler.cmu.cost_map)
                 DirectionList[0] = mn.Direction('zero', [0, [next_move[0], next_move[1]]], (0, 0))
-            x_y = np.array(
-                [DirectionList[0].Pos[0], DirectionList[0].Pos[1]])
+            x_y = np.array([DirectionList[0].Pos[0], DirectionList[0].Pos[1]])
             wall_check = self.controller.WallCheck(x_y[0], x_y[1])
             if wall_check[0] == True:
                 # need to check if next step is sphere and valid place(not -1 or wall)
-                row, col = self.GetBestDist(wall_check[1], x_y)  # get away from wall in -direct move
+                row, col = self.move_alg.GetBestDist(wall_check[1], x_y)  # get away from wall in -direct move
                 x_y[0] = row
                 x_y[1] = col
             check_sphere = self.SphereCheck(x_y)
@@ -421,7 +434,7 @@ class Inspect:
             xy = self.controller.ms.map_to_position(x_y)
             x_y = self.controller.ms.position_to_map(xy)
             xy = xy[1], xy[0]
-            self.Mark(x_y[0], x_y[1])
+            self.move_alg.Mark(x_y[0], x_y[1])
             self.controller.Move(xy[0], xy[1])
             if dist([xy[0], xy[1]], [self.controller.cur_pos[0], self.controller.cur_pos[1]]) >= DIFF:
                 if DirectionList[0].name == 'zero':
@@ -438,11 +451,9 @@ def vacuum_cleaning():
 def inspection():
     print('start inspection')
     check = Inspect()
-    rate = rospy.Rate(10)
     rospy.Subscriber("/odom", Odometry, check.controller.GetPos)
     while not rospy.is_shutdown():
         check.chooseDirection()
-        rate.sleep()
 
 
 def inspection_advanced():
