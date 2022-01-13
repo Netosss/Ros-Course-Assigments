@@ -24,23 +24,21 @@ GOOD_LINE = 5
 TH = 8
 WALL = 80
 SEEN_SIZE = 30
-RADIUS = 10  # to check if in center of sphere area
-COVER_RADIUS = 13  # to mark sphere around it
-SPHERE_SIZE = 20
-LINE_INDICATE = 10
+RADIUS_IN_M = 0.5  # change the radius of sphere here![m]
+RADIUS = round(14.6154 * RADIUS_IN_M + 2.76923)  # here we assign the size of the radius in pixels.
+COVER_RADIUS = 1.3 * RADIUS  # to mark sphere around it
+SPHERE_SIZE = 2 * RADIUS
 SPHERE_INDICATE = 80
 WALL_DIST = 5  # same as manager param!
-SHIFT_INDICATE = 12  # for indicate shifted circle
+SHIFT_INDICATE = 1.2 * RADIUS  # for indicate shifted circle
 DIFF = 3
-CLOSE_CENTER = 8
 STEP = 1.75
-WALL_DIST_C = 9
+WALL_DIST_C = 11
 SEEN_SIZE_C = 25
 RADIUS_EXTENSION = 0.1
-COMPLETE_FROM_CIRCLE = 0.5
-SPEED = 0.22  # 0.375
+SPEED = 0.20  # 0.375
 A = 0.03
-B = 0.05  # 0.04
+B = 0.04  # 0.04
 
 
 def signal_handler(signum, frame):
@@ -191,7 +189,7 @@ class Cleaning:
                                         wall=int(WALL_DIST_C + sqrt(WALL_DIST_C)) // 2, clean=True)[0] == False:
             passed = time.time() - start
             radius = A * passed + B
-            speed = SPEED + log(sqrt(passed), 35)
+            speed = SPEED + 0.35 * abs(log(passed + 1, 35))
             ang_speed = float(speed / radius)
             twist.linear.x = speed
             twist.angular.z = ang_speed
@@ -211,17 +209,17 @@ class Cleaning:
             current_xy = [self.controller.cur_pos[0], self.controller.cur_pos[1]]
             radius = 20 * self.MakeSpiral()  # spiral until cur pos is close to wall too much.
             left = Direction('left',
-                                self.move_alg.step(0, -1, seen=max(int(STEP * radius), SEEN_SIZE_C), xy_pos=current_xy),
-                                (0, -1))  # move radius
+                             self.move_alg.step(0, -1, seen=max(int(STEP * radius), SEEN_SIZE_C), xy_pos=current_xy),
+                             (0, -1))  # move radius
             right = Direction('right',
-                                 self.move_alg.step(0, 1, seen=max(int(STEP * radius), SEEN_SIZE_C), xy_pos=current_xy),
-                                 (0, 1))
+                              self.move_alg.step(0, 1, seen=max(int(STEP * radius), SEEN_SIZE_C), xy_pos=current_xy),
+                              (0, 1))
             up = Direction('up',
-                              self.move_alg.step(1, 0, seen=max(int(STEP * radius), SEEN_SIZE_C), xy_pos=current_xy),
-                              (1, 0))
+                           self.move_alg.step(1, 0, seen=max(int(STEP * radius), SEEN_SIZE_C), xy_pos=current_xy),
+                           (1, 0))
             down = Direction('down',
-                                self.move_alg.step(-1, 0, seen=max(int(STEP * radius), SEEN_SIZE_C), xy_pos=current_xy),
-                                (-1, 0))
+                             self.move_alg.step(-1, 0, seen=max(int(STEP * radius), SEEN_SIZE_C), xy_pos=current_xy),
+                             (-1, 0))
             DirectionList = [left, right, up, down]
             DirectionList.sort(key=Direction.getVal)
             if DirectionList[0].value == self.move_alg.MaxMove:
@@ -244,6 +242,7 @@ class Cleaning:
                                cur_pos=current_xy)
             self.controller.Move(xy[0], xy[1], use=False)
             print(xy)
+
 
 # mohammad code
 class CostmapUpdater:
@@ -270,7 +269,7 @@ class CostmapUpdater:
 
 
 class MovementHandler:
-    def __init__(self, manager: Manager):
+    def __init__(self, manager):
         self.controller = manager
         self.MyMap = self.controller.ms.map_arr
         self.MaxMove = max(self.controller.ms.shape[0], self.controller.ms.shape[1])
@@ -354,7 +353,7 @@ class MovementHandler:
         if ahead < wall:
             self.notAvailAble.append((cur_row, cur_col))
             self.Mark(cur_row, cur_col)
-            return [self.controller.cur_pos[0], self.controller.cur_pos[1]]
+            return [self.controller.cur_pos[0], self.controller.cur_pos[1]] 
         return [cur_row + i * ahead, cur_col + j * ahead]
 
     def step(self, i, j, seen=SEEN_SIZE, xy_pos=None):
@@ -374,7 +373,7 @@ class MovementHandler:
 
 
 class SphereHandler:
-    def __init__(self, manager: Manager):
+    def __init__(self, manager):
         self.cmu = CostmapUpdater()
         self.ms = MapService()
         self.m_founds_spheres = []  # center of exposed spheres
@@ -430,7 +429,8 @@ class SphereHandler:
                 center = [
                     cur_center[0] - RADIUS * (opposite_direction[0]),
                     cur_center[1] - RADIUS * (opposite_direction[1])]
-            self.m_founds_spheres.append(center)
+            if center not in self.m_founds_spheres:
+                self.m_founds_spheres.append(center)
 
     def Optimize(self, sphere_center1, sphere_center2):
         if sphere_center1 in self.m_founds_spheres and sphere_center2 in self.m_founds_spheres:
@@ -458,7 +458,7 @@ class SphereHandler:
                             if self.m_manager.WallCheck(x_2, y_2)[0] == False:
                                 sphere2_counter = sphere2_counter + 1
                 for direct in [[1, 1], [-1, 1], [-1, -1], [1, -1]]:
-                    for i in range(COVER_RADIUS // 2):
+                    for i in range(int(COVER_RADIUS // 2)):
                         x_1 = sphere_center1[0] + i * direct[0]
                         y_1 = sphere_center1[1] + i * direct[1]
                         if self.m_manager.Valid(x_1, y_1) and self.cmu.cost_map[x_1][y_1] > SPHERE_INDICATE:
