@@ -21,6 +21,10 @@ from map_msgs.msg import OccupancyGridUpdate
 import threading
 import time
 import tf
+from geometry_msgs.msg import Point
+import multiprocessing as mp
+from std_msgs.msg import Empty
+from threading import Lock
 
 GOOD_LINE = 5
 ESTIMATE_EACH = 3  # linear speed should be here
@@ -33,6 +37,9 @@ w1 = 0.7
 w2 = 1.0
 w3 = 0.9
 w4 = 3.0
+
+###
+DIST_FROM_PARTNER = 2.3
 import actionlib
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 import signal
@@ -45,7 +52,7 @@ RADIUS = round(14.6154 * RADIUS_IN_M + 2.76923)  # here we assign the size of th
 COVER_RADIUS = 1.3 * RADIUS  # to mark sphere around it
 SPHERE_SIZE = 2 * RADIUS
 SPHERE_INDICATE = 80
-WALL_DIST = 5  # same as manager param!
+WALL_DIST = 10  # same as manager param!
 SHIFT_INDICATE = 1.2 * RADIUS  # for indicate shifted circle
 DIFF = 3
 STEP = 1.75
@@ -104,12 +111,12 @@ class MapService(object):
 
 
 class Manager:
-    def __init__(self, player):
+    def __init__(self, player, map_):
         self.id = player
         self.ms = MapService(self.id)
-        self.cur_pos = None
-        self.my_map_ = copy.deepcopy(self.ms.map_arr)
+        self.my_map_ = map_
         self.initial_pose = PositionHandler(self.id, self.ms)
+        self.partner_pose = PositionHandler(1 - int(self.id), self.ms)  # assume same ms is ok...
         self.rc_DWA_client = dynamic_reconfigure.client.Client('tb3_%d/move_base/DWAPlannerROS/' % self.id)
         self.rc_DWA_client.update_configuration({"max_vel_x": 2.5})
         self.rc_DWA_client.update_configuration({"min_vel_x": -2.5})
@@ -155,9 +162,10 @@ class Manager:
 
 
 class MovementHandler:
-    def __init__(self, manager):
+    def __init__(self, manager, mutex_):
         self.controller = manager
-        self.MyMap = self.controller.ms.map_arr
+        self.mutex = mutex_
+        self.MyMap = self.controller.my_map_
         self.MaxMove = max(self.controller.ms.shape[0], self.controller.ms.shape[1])
         self.notAvailAble = []
 
@@ -192,7 +200,7 @@ class MovementHandler:
 
     def Mark(self, x_dest, y_dest, seen=SEEN_SIZE, wall=WALL_DIST, cur_pos=None):
         if cur_pos is None:
-            cur_pos = self.controller.cur_pos
+            cur_pos = self.controller.initial_pose.m_cur_pos
         current_square = seen
         while current_square > 0:
             if self.controller.InMyArea(x_dest, y_dest, current_square, cur_pos) == True:
@@ -211,20 +219,32 @@ class MovementHandler:
                 row = cur_pos[0] + i
                 column = cur_pos[1] + j
                 if self.controller.Valid(row, column) and self.MyMap[row][column] == 0:
-                    self.MyMap[row][column] = -1
+                    self.mutex.acquire()
+                    try:
+                        self.MyMap[row][column] = -1
+                    finally:
+                        self.mutex.release()
 
-    def FindBestZero(self, cost_map=None, seen=SEEN_SIZE, wall=WALL_DIST):
+    def FindBestZero(self, cost_map=None, seen=SEEN_SIZE, wall=WALL_DIST, partner_zero=False):
         if cost_map is None:
             cost_map = self.MyMap
         for row in range(self.controller.ms.shape[0]):
+            if partner_zero == True:
+                row = self.controller.ms.shape[0] - row
             for col in range(self.controller.ms.shape[1]):
+                if partner_zero == True:
+                    col = self.controller.ms.shape[1] - col
                 if self.controller.Valid(col, row) == True and self.MyMap[col][row] == 0 and (
                         col, row) not in self.notAvailAble and self.controller.InMyArea(col, row,
                                                                                         seen,
-                                                                                        self.controller.cur_pos) == False and \
-                        self.ZerosWallCheck(col, row, wall)[0] == False and cost_map[row][col] < SPHERE_INDICATE:
+                                                                                        self.controller.initial_pose.m_cur_pos) == False and \
+                        self.ZerosWallCheck(col, row, wall)[0] == False and cost_map[row][
+                    col] < SPHERE_INDICATE and GetDistToGoal(self.controller.id,
+                                                             self.controller.ms.map_to_position(np.array([col, row])),
+                                                             self.controller.ms.map_to_position(
+                                                                 self.controller.partner_pose.m_cur_pos)) > 1.3 * DIST_FROM_PARTNER:
                     return [col, row]
-        return [self.controller.cur_pos[0], self.controller.cur_pos[1]]
+        return [self.controller.initial_pose.m_cur_pos[0], self.controller.initial_pose.m_cur_pos[1]]
 
     def GetBestDist(self, direction, dest, wall=WALL_DIST, seen=SEEN_SIZE):
         i, j = -direction[0], -direction[1]
@@ -239,12 +259,12 @@ class MovementHandler:
         if ahead < wall:
             self.notAvailAble.append((cur_row, cur_col))
             self.Mark(cur_row, cur_col)
-            return [self.controller.cur_pos[0], self.controller.cur_pos[1]]
+            return [self.controller.initial_pose.m_cur_pos[0], self.controller.initial_pose.m_cur_pos[1]]
         return [cur_row + i * ahead, cur_col + j * ahead]
 
     def step(self, i, j, seen=SEEN_SIZE, xy_pos=None):
-        x = self.controller.cur_pos[0]
-        y = self.controller.cur_pos[1]
+        x = self.controller.initial_pose.m_cur_pos[0]
+        y = self.controller.initial_pose.m_cur_pos[1]
         size = SPHERE_SIZE
         if xy_pos is not None:
             x = xy_pos[0]
@@ -387,8 +407,8 @@ class SphereHandler:
             j = -SEEN_SIZE - SPHERE_SIZE
             while j < SEEN_SIZE + SPHERE_SIZE:
                 j = j + 1
-                row = self.m_manager.cur_pos[0] + i
-                column = self.m_manager.cur_pos[1] + j
+                row = self.m_manager.initial_pose.m_cur_pos[0] + i
+                column = self.m_manager.initial_pose.m_cur_pos[1] + j
                 if self.m_manager.Valid(row, column) and cur_map[row][column] > SPHERE_INDICATE:
                     if self.m_manager.WallCheck(row, column)[0] == True:
                         self.WallHandler(row, column, cur_map)
@@ -433,13 +453,22 @@ class SphereHandler:
 
 class Inspect:
 
-    def __init__(self, player):
+    def __init__(self, player, map_, mutex_):
         self.id = player
-        self.controller = Manager(self.id)
+        self.controller = Manager(self.id, map_)
         self.m_sph_handler = SphereHandler(self.controller, self.id)
         self.first = True
-        self.move_alg = MovementHandler(self.controller)
-        self.publisher = rospy.Publisher('tb3_%d/inspection_report' % self.id, String, queue_size=10)
+        self.last_partner_direction = (-1, -1)
+        self.move_alg = MovementHandler(self.controller, mutex_)
+        self.publisher = rospy.Publisher('inspection_report', String, queue_size=10)
+        self.direction_publisher = rospy.Publisher('tb3_%d/last_move_direc' % self.id, Point, queue_size=10)
+        self.partner_direction_subscriber = rospy.Subscriber('tb3_%d/last_move_direc' % (1 - self.id), Point,
+                                                             self.UpdatePartnerDirection)
+        self.partner_zero = False
+        self.first_move = True
+
+    def UpdatePartnerDirection(self, data):
+        self.last_partner_direction = [int(data.x), int(data.y)]
 
     def PublishSpheres(self):
         while True:
@@ -452,7 +481,6 @@ class Inspect:
             time.sleep(10)
 
     def printit(self):
-        # here we should publish to topic by the rules.!
         threading.Timer(0.0, self.PublishSpheres).start()
 
     # check also spheres
@@ -513,8 +541,8 @@ class Inspect:
             step = min(COVER_RADIUS // 2, int(counter_down // 2))
             return np.array([row_down + step * (-opp_direction[0]), col_down + step * (-opp_direction[1])])
 
-    def chooseDirection(self):
-        if self.controller.cur_pos is not None:
+    def chooseDirection(self, msg):
+        if self.controller.initial_pose.m_cur_pos[0] is not None:
             if self.first == True:
                 self.printit()
                 self.m_sph_handler.UpdateMap()
@@ -525,9 +553,39 @@ class Inspect:
             down = Direction('down', self.move_alg.step(-1, 0), (-1, 0))
             DirectionList = [left, right, up, down]
             DirectionList.sort(key=Direction.getVal)
+            # if we close to partner and make the same move we will make another direct
+            # if self.last_partner_direction != (-1, -1) and GetDistToGoal(self.id, self.controller.ms.map_to_position(
+            #         self.controller.initial_pose.m_cur_pos),
+            #                                                              self.controller.ms.map_to_position(
+            #                                                                  self.controller.partner_pose.m_cur_pos)) < DIST_FROM_PARTNER and (
+            #         any(DirectionList[0].direc_ == self.last_partner_direction) or (
+            #         DirectionList[0].value == self.move_alg.MaxMove and self.last_partner_direction == (
+            #         0, 0))):  # if we are close and (go same direction or we both need find best zero)
+            #     if self.last_partner_direction == (0, 0):  # both best zero move+
+            #         self.partner_zero = True
+            #     # elif self.last_partner_direction == (-1, -1):#stay at current position move
+            #     else:
+            #         DirectionList[0] = DirectionList[1]
+            if DirectionList[0].value != self.move_alg.MaxMove and GetDistToGoal(self.id,
+                                                                                 self.controller.ms.map_to_position(
+                                                                                         self.controller.initial_pose.m_cur_pos),
+                                                                                 self.controller.ms.map_to_position(
+                                                                                     self.controller.partner_pose.m_cur_pos)) < DIST_FROM_PARTNER:
+                cur_max = [0, DirectionList[0]]
+                for i in range(4):
+                    estimate_goal = self.controller.ms.map_to_position(self.controller.initial_pose.m_cur_pos + \
+                                                                       DirectionList[i].direc_[0] * SEEN_SIZE +
+                                                                       DirectionList[i].direc_[1] * SEEN_SIZE)
+
+                    cur_dist = GetDistToGoal(self.id, self.controller.ms.map_to_position(
+                        self.controller.partner_pose.m_cur_pos), estimate_goal)
+                    if cur_dist > cur_max[0]:
+                        cur_max = [cur_dist, DirectionList[i]]
+                DirectionList[0] = cur_max[1]
             if DirectionList[0].value == self.move_alg.MaxMove:
-                next_move = self.move_alg.FindBestZero(self.m_sph_handler.cmu.cost_map)
+                next_move = self.move_alg.FindBestZero(self.m_sph_handler.cmu.cost_map, partner_zero=self.partner_zero)
                 DirectionList[0] = Direction('zero', [0, [next_move[0], next_move[1]]], (0, 0))
+                self.partner_zero = False
             x_y = np.array([DirectionList[0].Pos[0], DirectionList[0].Pos[1]])
             wall_check = self.controller.WallCheck(x_y[0], x_y[1])
             if wall_check[0] == True:
@@ -542,12 +600,24 @@ class Inspect:
             x_y = self.controller.ms.position_to_map(xy)
             xy = xy[1], xy[0]
             self.move_alg.Mark(x_y[0], x_y[1])
-            Move(self.id, xy[0], xy[1])  # maybe need swap x-y
-            if dist([xy[0], xy[1]], [self.controller.cur_pos[0], self.controller.cur_pos[1]]) >= DIFF:
+            Move(self.id, xy[0], xy[1])
+            print(self.id, xy)
+            if dist([xy[0], xy[1]],
+                    [self.controller.initial_pose.m_cur_pos[0], self.controller.initial_pose.m_cur_pos[1]]) >= DIFF:
+                str1 = ''.join(str(e) for e in DirectionList[0].direc_)
+                point = Point()
+                point.x = DirectionList[0].direc_[0]
+                point.y = DirectionList[0].direc_[1]
+                self.direction_publisher.publish(point)
                 if DirectionList[0].name == 'zero':
                     self.m_sph_handler.UpdateWholeMap()
                 else:
                     self.m_sph_handler.UpdateMap()
+            else:
+                point = Point()
+                point.x = -1
+                point.y = -1
+                self.direction_publisher.publish(point)
 
 
 ###//////////////////////////////////////////////////////////////////////////////////////////////////////////////###
@@ -557,8 +627,9 @@ class CostmapUpdater:
     def __init__(self, player):
         self.cost_map = None
         self.shape = None
-        rospy.Subscriber('tb3_%d//move_base/global_costmap/costmap' % player, OccupancyGrid, self.init_costmap_callback)
-        rospy.Subscriber('tb3_%d//move_base/global_costmap/costmap_updates' % player, OccupancyGridUpdate,
+
+        rospy.Subscriber('/tb3_%d/move_base/global_costmap/costmap' % player, OccupancyGrid, self.init_costmap_callback)
+        rospy.Subscriber('tb3_%d/move_base/global_costmap/costmap_updates' % player, OccupancyGridUpdate,
                          self.costmap_callback_update)
 
     def init_costmap_callback(self, msg):
@@ -578,10 +649,10 @@ class CostmapUpdater:
 
 
 def Move(agent_id, x, y, w=1.0, use=True):
-    if use == True:
-        max_time = 45  # 45 secs before starting a new move instead this one
-        signal.signal(signal.SIGALRM, signal_handler)
-        signal.alarm(max_time)
+    # if use == True:
+    #     max_time = 45  # 45 secs before starting a new move instead this one
+    #     signal.signal(signal.SIGALRM, signal_handler)
+    #     signal.alarm(max_time)
     try:
         client = actionlib.SimpleActionClient('tb3_%d/move_base' % agent_id, MoveBaseAction)
         client.wait_for_server()
@@ -642,7 +713,7 @@ def GetDistToGoal(agent_id, cur_pos, goal_pos):
         for i in range(len(data.poses) - 1):
             sum_ += sqrt(pow((data.poses[i + 1].pose.position.x - data.poses[i].pose.position.x), 2) + pow(
                 (data.poses[i + 1].pose.position.y - data.poses[i].pose.position.y), 2))
-        rospy.loginfo(len(resp.plan.poses))
+        # rospy.loginfo(len(resp.plan.poses))
         # return sum_
         if sum_ == float(0):  # in case make path failed we take euclidean dist
             return dist(cur_pos, goal_pos)
@@ -991,9 +1062,26 @@ def vacuum_cleaning(id_, agent_max_vel):
 
 def inspection(agent_1_max_vel, agent_2_max_vel):
     print('start inspection')
-    check = Inspect(0)
+    map_ = copy.deepcopy(MapService(0).map_arr)
+    mutex = Lock()
+
+    check_0 = Inspect(0, map_, mutex)
+    check_1 = Inspect(1, map_, mutex)
+    sub = rospy.Subscriber('start_foo%d' % 0, Empty, check_0.chooseDirection, queue_size=10)
+    sub1 = rospy.Subscriber('start_foo%d' % 1, Empty, check_1.chooseDirection, queue_size=10)
+
+    while rospy.is_shutdown():
+        continue
+    pub0 = rospy.Publisher('/start_foo0', Empty, queue_size=10)
+    pub1 = rospy.Publisher('/start_foo1', Empty, queue_size=10)
+    rate = rospy.Rate(50)
     while not rospy.is_shutdown():
-        check.chooseDirection()
+        pub0.publish()
+        rate.sleep()
+        pub1.publish()
+        continue
+    # check.m_sph_handler.cmu.show_map()
+
 
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
