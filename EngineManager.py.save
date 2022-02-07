@@ -14,7 +14,7 @@ powersList = [32, 23]
 
 # d = 26
 # angle0 = 70
-# angle1 = angle0 + d 
+# angle1 = angle0 + d
 # defaultAngles = [angle1 + d + 1,  0]
 # defaultAngles[1] = defaultAngles[0] + d -1
 
@@ -26,7 +26,7 @@ powersList = [32, 23]
 angles = [angle0, angle1]
 
 #gpio defines:
-ButtonIn = 14
+ButtonIn = 21
 ServoMotorIn = 4
 servoIn = [11, 9]
 servoPow = [8.5, 7.2]
@@ -136,7 +136,8 @@ def StartMotor(gpio, t=1):
 
 # # # 5,32,55
 def main():
-# # 	# print('starting!!')
+# # 
+	# print('starting!!')
 	button = Button(ButtonIn)
 	button.wait_for_press()
 # # 	#GPIO.cleanup()
@@ -171,7 +172,6 @@ def main():
 # 	#sleep(2)
 # 	#sleep(2)
 	GPIO.setmode(GPIO.BCM)
-	GPIO.cleanup()
 	
 
 

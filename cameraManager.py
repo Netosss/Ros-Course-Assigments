@@ -22,10 +22,10 @@ class Camera():
 		self.counted_ids = []
 		self.iteration_num = 0
 		self.offset_y = 70
-		self.offset_x = 100
+		self.offset_x = 130
 		self.y_start = self.height//2 - self.offset_y
 		self.y_end = self.height//2 + self.offset_y
-		self.x_start = width//2 - self.offset_x - 95
+		self.x_start = width//2 - self.offset_x - 69
 		self.x_end = width//2 + self.offset_x 
 		self.id_first_coordinate = {}# key:id, val: coordinate y
 		self.id_curr_coordinate = {}
@@ -82,7 +82,7 @@ class Camera():
 						self.counted_ids.append(id_out)
 						print("Screw {} was out and made a {} pixeles road.\n".format(id_out, abs(self.id_curr_coordinate[box_id]- self.id_first_coordinate[box_id])))
 						# print(abs(y_start-y_end)) == 140
-						if abs(self.id_curr_coordinate[box_id]- self.id_first_coordinate[box_id]) >= 56:#abs(y_start-y_end)//3:
+						if abs(self.id_curr_coordinate[box_id]- self.id_first_coordinate[box_id]) >= 40:#abs(y_start-y_end)//3:
 							self.curr_count += 1
 
 
