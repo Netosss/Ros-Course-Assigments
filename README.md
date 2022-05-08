@@ -8,8 +8,7 @@ The course will include both learning of various theoretical tools for modeling 
 
 
 
-![image](https://user-images.githubusercontent.com/92423203/167304141-fd9b3286-3b6f-403b-8102-c0091fb3d7e1.png)
-
+![image](https://user-images.githubusercontent.com/92423203/167304173-45857bc5-2a6c-4918-8842-6ed86645e75d.png)
 
 
 
