@@ -6,6 +6,13 @@ The course will review different approaches to the design and planning of single
 Certainty, model-based inference, game theory, multi-agent systems, learning reinforcement and more.
 The course will include both learning of various theoretical tools for modeling multi-robot systems and practical work of robots in a ROS environment.
 
+
+
+![image](https://user-images.githubusercontent.com/92423203/167304141-fd9b3286-3b6f-403b-8102-c0091fb3d7e1.png)
+
+
+
+
 Exercise 1:
 Basic understanding of the robot world in ROS.
 
