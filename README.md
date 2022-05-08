@@ -1,4 +1,4 @@
-# ros_course
+# ros course
 
 This repo was created to preserve the results of the "Advanced Topics in Computer Science" course at the Technion University.
 Course summary:
