@@ -1,7 +1,9 @@
 # ros course
 
 This repo was created to preserve the results of the "Advanced Topics in Computer Science" course at the Technion University.
+
 Course summary:
+
 The course will review different approaches to the design and planning of single-robot systems and multi-robot systems. Tools for the efficient design of these systems come from a variety of areas of artificial intelligence (AI), such as automated design and serial decision-making under non-critical conditions.
 Certainty, model-based inference, game theory, multi-agent systems, learning reinforcement and more.
 The course will include both learning of various theoretical tools for modeling multi-robot systems and practical work of robots in a ROS environment.
