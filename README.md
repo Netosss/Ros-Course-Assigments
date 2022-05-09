@@ -23,4 +23,4 @@ Divided into two tasks where the first is to cover an unmapped area under a time
 Exercise 3:
 Managed for a multi-robot environment, when it too is divided into two tasks. The first is to cover space effectively by a number of robots with a time limit, and the second is to clean a fully-mapped environment with an adversary agent.
 
-The explanation for the solution to the exercises can be seen in the attached presentations.
+The explanation for the solutions to the exercises can be seen in the attached presentations (pdf files).
